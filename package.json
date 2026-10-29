@@ -1,0 +1,23 @@
+{
+  "name": "aimh-gateway",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "types": "wrangler types --strict-vars=false",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p test",
+    "db:local": "wrangler d1 migrations apply DB --local",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "hono": "^4.6.0",
+    "jose": "^5.9.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.5",
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0",
+    "wrangler": "^4.148.0"
+  }
+}

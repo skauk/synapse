@@ -1,0 +1,8 @@
+{
+  "default_server_config": {
+    "m.homeserver": { "base_url": "http://localhost:8008", "server_name": "klinikum.example" }
+  },
+  "disable_guests": true,
+  "disable_custom_urls": true,
+  "brand": "PGK demo"
+}
