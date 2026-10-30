@@ -193,7 +193,7 @@ The end-to-end checks use the mock IdP, not the real ID Austria.
 
 ## Public demo server (optional, not needed to run the project)
 
-The same bot also ran on a deployed Cloudflare Worker (`https://synapse.skauk.workers.dev`) against a public Synapse that was exposed through a Cloudflare Tunnel for one day. The files for that Synapse are in [`deploy/homer/`](deploy/homer/); nothing there is needed to run the project locally. In that setup anyone with a registration token gets an account, joins the room and types `!request ...` with their own email address and a **test** ID Austria identity. Limits: 10 commands per Matrix user, only on 2026-10-30, and only the demo patient `aimh-skauk-maria-beispiel` on the public HAPI server. These are settings in `wrangler.jsonc` (`MATRIX_OPEN`, `BOT_MAX_MESSAGES`, `BOT_ACTIVE_DATE`, `ALLOWED_PATIENTS`). Real emails go out from `requests@dingsbums.click` through Cloudflare Email Service.
+The same bot also ran on a deployed Cloudflare Worker (`https://synapse.skauk.workers.dev`) against a public Synapse that was exposed through a Cloudflare Tunnel for one day. The files for that Synapse are in [`deploy/public/`](deploy/public/); nothing there is needed to run the project locally. In that setup anyone with a registration token gets an account, joins the room and types `!request ...` with their own email address and a **test** ID Austria identity. Limits: 10 commands per Matrix user, only on 2026-10-30, and only the demo patient `aimh-skauk-maria-beispiel` on the public HAPI server. These are settings in `wrangler.jsonc` (`MATRIX_OPEN`, `BOT_MAX_MESSAGES`, `BOT_ACTIVE_DATE`, `ALLOWED_PATIENTS`). Real emails go out from `requests@dingsbums.click` through Cloudflare Email Service.
 
 Email safety: addresses on reserved domains (`.example`, `.test`, `.invalid`, `localhost`, `example.com/org/net`) are never sent to, as the brief asks, and the outcome of every send (`sent`, `not sent: reason`, `failed: error`, `redirected`) is stored in the outbox and the audit entry. `MAIL_REDIRECT_TO` sends every request email to one mailbox you control, with "meant for <address>" in the subject, so a demo can show a real email without contacting the scenario's fictional recipients.
 
@@ -221,7 +221,7 @@ src/audit.ts          hash-chained audit log
 migrations/           D1 schema
 docker-compose.yml    the whole local stack: the one file to run
 Dockerfile, docker/   the Worker image and the Synapse and seed scripts used by the stack
-deploy/homer/         optional: the public Matrix server of the live demo (not needed locally)
+deploy/public/        optional: the public Matrix server of the live demo (not needed locally)
 scripts/              FHIR validation, ID Austria probe, patient seed
 test/                 unit tests and end-to-end scripts
 ```
