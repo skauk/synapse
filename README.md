@@ -91,32 +91,45 @@ node test/matrix-e2e.mjs       # 13 checks through Matrix (set MAILPIT_PORT if y
 
 Last runs on a cold start from a clean copy of the repository: all of the above pass, and the validator reports 0 errors.
 
-## What works, what is simulated
-
-| Part | Status |
-|---|---|
-| Request from a Matrix room (`!request …`), generic email/SMS, link | Works. Email goes through Cloudflare Email Service when `MAIL_MODE=cloudflare` (code and local simulation tested, **no real send yet**); in the automated tests and by default locally it is only recorded in a simulated outbox. SMS is always simulated |
-| Identity check with an eID, name matched to the named person, minimum eIDAS level enforced | Works with the **real ID Austria reference environment** (one login so far, with a test identity, on the deployed Worker) and with a mock IdP for the automated tests |
-| Answer by upload or paste of the Markdown | Works |
-| Parsing, FHIR mapping, filing to a FHIR server, HL7 validator | Works, 0 validator errors |
-| Misdelivery: wrong address, forwarded request, wrong patient, wrong document type | Works (tested with the mock IdP) |
-| Audit log of all six steps, hash-chained | Works |
-| Notification to Dr. Hofer in Matrix | Works (Synapse + Element in Docker; the bot is an application service) |
-
-Not built: a warning for look-alike domains at request time, a qualified electronic signature on the answer, retry when the FHIR server is down, a typed-in form (we take the Markdown file or pasted text, the patient identity comes from its header), mapping of the rehab medication list to FHIR (it is attached as text).
-
 ## Architecture
 
-```
- Element Web ──▶ Synapse ──(app service push)──▶ ┌────────────────────────── Cloudflare Worker ──────────────────────────┐
-  Dr. Hofer         ▲                             │ Hono routes: Matrix bot · request API · outsider portal · audit API  │
-                    │ bot replies                  │ Durable Object per request: state, one-time link token, sessions     │
-                    └──────────────────────────────│ D1: audit (hash chain), simulated outbox, Matrix event dedupe        │
-                                                   │ parse.ts → fhir.ts (builder) → fhir-client.ts                        │
- Outside person ◀── email/SMS (link only) ─────────│ identity/: IdentityProvider = OIDC (ID Austria) | mock               │
-   browser ───────▶ link → eID login → answer ─────└───────────────┬──────────────────────────────────────────────────────┘
-                                                                   ▼
-                                                      HAPI FHIR server (R4)
+```mermaid
+flowchart LR
+    subgraph clinic["🏥 Clinic network (closed, Matrix)"]
+        doctor["👩‍⚕️ Dr. Hofer<br/>Element Web"]
+        synapse["Synapse<br/>room: External requests"]
+        doctor <-->|chat| synapse
+    end
+
+    subgraph service["⚙️ Request service (a Cloudflare Worker; locally run by wrangler dev)"]
+        bot["🤖 Matrix bot<br/>application service"]
+        portal["🌐 Outsider portal<br/>link · eID check · answer form"]
+        core["🧪 Checks and mapping<br/>parse Markdown · match patient · build FHIR"]
+        state[("🔐 Durable Object per request<br/>state · one-time link token")]
+        audit[("📜 D1<br/>hash-chained audit log")]
+        bot --> state
+        portal --> state
+        portal --> core
+        core --> audit
+        state --> audit
+    end
+
+    subgraph outside["🧑‍🔬 Outside the network"]
+        person["Outside person<br/>browser only, nothing to install"]
+        mail["✉️ Email<br/>Mailpit locally, Cloudflare Email Service live"]
+        eid["🪪 ID Austria (OIDC)<br/>mock locally, reference environment live"]
+    end
+
+    fhir[("🏷️ HAPI FHIR server<br/>R4")]
+
+    synapse -->|"① !request (event push)"| bot
+    bot -->|"② generic link, no patient data"| mail
+    mail --> person
+    person -->|"③ opens link"| portal
+    portal <-->|"④ proves identity"| eid
+    person -->|"⑤ uploads the answer"| portal
+    core -->|"⑥ files FHIR + Provenance"| fhir
+    bot -->|"⑦ reports in the room"| synapse
 ```
 
 | Component | Role | Built or used | Replaceable by |
@@ -212,3 +225,7 @@ deploy/homer/         optional: the public Matrix server of the live demo (not n
 scripts/              FHIR validation, ID Austria probe, patient seed
 test/                 unit tests and end-to-end scripts
 ```
+
+## Limitations
+
+This is a prototype. The eID check is real only against the ID Austria reference environment with test identities, never a real person's eID, and the automated tests use the mock IdP. The identity check matches the eID name to the name the doctor typed, so two people with the same name cannot be told apart; the bPK is recorded but not yet bound to a person across requests. The answer has no qualified electronic signature, and nothing warns at request time when an address looks like a typo of a known domain. We accept only the Markdown format as an upload or pasted text (the patient is identified by its header), not a typed-in form. Filing is not queued: if the FHIR server is down the person sees an error and has to submit again. The rehab report is attached as text and its medication list is not mapped to FHIR resources. SMS is only simulated, as no gateway is connected. The Matrix room is not end-to-end encrypted, because the bot could not read an encrypted room. The service runs on Cloudflare Workers, a third party, which is acceptable for a demo but not for patient data; the answer to design question 5 describes how a clinic would run it. The time an outside person needs has not been measured with a new person.
