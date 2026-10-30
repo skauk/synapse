@@ -1,5 +1,15 @@
-# Local stack: FHIR server and the Matrix network (Synapse + Element Web).
-# Setup: scripts/matrix-setup.sh. All ports are bound to localhost only.
+# Local demo stack for the PGK external-request service. One command: docker compose up --build
+#   Element   http://localhost:8081  (log in as @lena.hofer:klinikum.example / demo-only-lena, homeserver http://localhost:8008)
+#   Mailpit   http://localhost:8025  (the request emails land here)
+#   Worker    http://localhost:8787  (/outbox shows simulated mail and the messages sent to the doctor)
+# Everything is synthetic and bound to localhost. The tokens below are demo values, not secrets.
+name: aimh
+
+x-demo: &demo
+  BOT_API_TOKEN: demo-bot-token
+  AS_TOKEN: demo-as-token-local-only
+  HS_TOKEN: demo-hs-token-local-only
+
 services:
   hapi:
     image: hapiproject/hapi:latest
@@ -8,14 +18,63 @@ services:
       hapi.fhir.fhir_version: R4
       hapi.fhir.enforce_referential_integrity_on_write: "true"
 
+  mailpit:
+    image: axllent/mailpit:latest
+    # Another program on port 8025? Run with MAILPIT_PORT=8026 docker compose up --build
+    ports: ["127.0.0.1:${MAILPIT_PORT:-8025}:8025"]
+
+  matrix-init:
+    image: matrixdotorg/synapse:latest
+    entrypoint: ["/bin/sh", "/init.sh"]
+    environment:
+      <<: *demo
+      SYNAPSE_SERVER_NAME: klinikum.example
+      SYNAPSE_REPORT_STATS: "no"
+      WORKER_URL: http://worker:8787
+    volumes:
+      - synapse-data:/data
+      - ./docker/matrix-init.sh:/init.sh:ro
+
   synapse:
     image: matrixdotorg/synapse:latest
+    depends_on:
+      matrix-init: { condition: service_completed_successfully }
     ports: ["127.0.0.1:8008:8008"]
-    volumes: ["./matrix/synapse:/data"]
-    # Lets Synapse reach the Worker that `wrangler dev` runs on the host.
-    extra_hosts: ["host.docker.internal:host-gateway"]
+    volumes: ["synapse-data:/data"]
 
   element:
     image: vectorim/element-web:latest
     ports: ["127.0.0.1:8081:80"]
     volumes: ["./matrix/element-config.json:/app/config.json:ro"]
+
+  worker:
+    build: .
+    # Starts after the seed has finished, so `docker compose up --wait` returns only when the room exists.
+    # The bot joins the room when this service starts and Synapse delivers the invitation.
+    depends_on:
+      hapi: { condition: service_started }
+      mailpit: { condition: service_started }
+      seed: { condition: service_completed_successfully }
+    ports: ["127.0.0.1:8787:8787"]
+    environment:
+      <<: *demo
+      # Defaults: closed network, no limits. test/limit-e2e.mjs sets these to try the open demo mode.
+      MATRIX_OPEN: ${MATRIX_OPEN:-false}
+      BOT_MAX_MESSAGES: ${BOT_MAX_MESSAGES:-0}
+      BOT_ACTIVE_DATE: ${BOT_ACTIVE_DATE:-}
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:8787/healthz').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 15s
+
+  seed:
+    build: .
+    entrypoint: ["node", "docker/seed.mjs"]
+    depends_on: [hapi, synapse]
+    restart: "no"
+    volumes: ["synapse-data:/synapse-data:ro"]
+
+volumes:
+  synapse-data:

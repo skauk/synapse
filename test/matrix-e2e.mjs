@@ -1,10 +1,13 @@
 // Full flow through Matrix: Dr. Hofer asks in her room, the outsider answers in the browser, the bot reports back.
-// Needs: docker compose up (hapi, synapse), scripts/matrix-setup.sh, and `npm run dev` (mock IdP).
+// Needs the Docker demo stack (`docker compose up --build`); finds the room by name, takes request links from Mailpit.
+// MAILPIT_PORT=8026 if Mailpit does not run on 8025.
 import { readFileSync } from "node:fs";
 
 const BASE = process.env.BASE_URL ?? "http://localhost:8787";
 const HS = process.env.MATRIX_URL ?? "http://localhost:8008";
-const ROOM = readFileSync(new URL("../matrix/room.txt", import.meta.url), "utf8").trim();
+let ROOM; // found by name below
+const MAILPIT = process.env.MAILPIT_URL ?? `http://localhost:${process.env.MAILPIT_PORT ?? 8025}`;
+
 const doc = (name) => readFileSync(new URL(`../scenario/documents/${name}`, import.meta.url), "utf8");
 
 let failed = 0;
@@ -29,6 +32,43 @@ async function loginAs(user, password) {
   throw new Error(`login as ${user} kept hitting the rate limit`);
 }
 const auth = await loginAs("lena.hofer", "demo-only-lena");
+
+/** The room is found by name, so the test needs no file from the setup. */
+async function findRoom(headers) {
+  const joined = (await (await fetch(`${HS}/_matrix/client/v3/joined_rooms`, { headers })).json()).joined_rooms ?? [];
+  for (const id of joined) {
+    const name = await (await fetch(`${HS}/_matrix/client/v3/rooms/${encodeURIComponent(id)}/state/m.room.name`, { headers })).json();
+    if (name.name === "External requests") return id;
+  }
+  throw new Error('room "External requests" not found: run the setup first');
+}
+ROOM = await findRoom(auth);
+
+/** The request link: from the bot's demo link (outbox mode) or from the email that Mailpit caught. */
+async function mailIds() {
+  try {
+    return new Set((await (await fetch(`${MAILPIT}/api/v1/messages?limit=50`)).json()).messages.map((m) => m.ID));
+  } catch {
+    return new Set();
+  }
+}
+async function linkFor(reply, mailBefore) {
+  const direct = reply?.match(/demo link: ([^\s)]+)/)?.[1];
+  if (direct) return direct;
+  for (let i = 0; i < 30; i++) {
+    try {
+      const list = (await (await fetch(`${MAILPIT}/api/v1/messages?limit=50`)).json()).messages;
+      const fresh = list.find((m) => !mailBefore.has(m.ID));
+      if (fresh) {
+        const full = await (await fetch(`${MAILPIT}/api/v1/message/${fresh.ID}`)).json();
+        const link = full.Text.match(/https?:\/\/\S+\/r\/\S+/)?.[0];
+        if (link) return link;
+      }
+    } catch {}
+    await new Promise((r) => setTimeout(r, 500));
+  }
+  return undefined;
+}
 
 /** Send a message as `headers`' user. Throws with Synapse's error, so a rejected message is not mistaken for a silent bot. */
 async function sendAs(headers, text) {
@@ -92,11 +132,12 @@ await say("!request lab Eva");
 check("malformed command is explained", !!(await waitForBot(/needs four parts/)));
 
 // Request 1, answered correctly
+const mailBefore1 = await mailIds();
 await say('!request lab "Dr. Eva Brandl" eva.brandl@labor-kanal.example maria-beispiel');
 const sent = await waitForBot(/Request sent to Dr\. Eva Brandl by email/);
 check("request 1 is confirmed in the room", !!sent);
 check("confirmation names the recipient, not the patient", !!sent && !/Maria|Beispiel/.test(sent.split("(demo link")[0]));
-const link = sent?.match(/demo link: ([^\s)]+)/)?.[1];
+const link = await linkFor(sent, mailBefore1);
 const cookie = await identifyAs(link, "brandl");
 await answer(cookie, doc("lab-result-maria-beispiel.md"));
 const filed = await waitForBot(/✅.*Maria Beispiel/);
@@ -119,7 +160,7 @@ await step("leave", guest, {});
 check("non-member's request created nothing", mailsBefore > 0 && (await countMails()) === mailsBefore);
 
 // Synapse resends a transaction until it gets a 200: the same event must run once
-const HS_TOKEN = readFileSync(new URL("../.dev.vars", import.meta.url), "utf8").match(/^HS_TOKEN=(.+)$/m)?.[1];
+const HS_TOKEN = process.env.HS_TOKEN ?? "demo-hs-token-local-only";
 const event = {
   type: "m.room.message",
   event_id: `$dedupe-${crypto.randomUUID()}`,
@@ -145,10 +186,12 @@ const dupes = (await botMessages()).filter((m) => /Request sent to Dr\. Dedupe T
 check("a resent event creates only one request", dupes.length === 1);
 
 // M3 through Matrix: Max's document for Maria's request
+const mailBefore2 = await mailIds();
 await say('!request lab "Dr. Eva Brandl" eva.brandl@labor-kanal.example KB-000123');
 const sent2 = (await waitForBot(/Request sent to Dr\. Eva Brandl/)) ?? "";
-check("patient can be found by MRN", sent2.includes("demo link"));
-const cookie2 = await identifyAs(sent2.match(/demo link: ([^\s)]+)/)?.[1], "brandl");
+const link2 = await linkFor(sent2, mailBefore2);
+check("patient can be found by MRN", !!link2);
+const cookie2 = await identifyAs(link2, "brandl");
 await answer(cookie2, doc("lab-result-max-beispiel.md"));
 const warning = await waitForBot(/⚠️.*does not match/);
 check("M3: Dr. Hofer is warned in her room", !!warning && /patient name/.test(warning) && /Nothing was filed/.test(warning));

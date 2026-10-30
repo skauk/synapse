@@ -37,3 +37,20 @@ describe("pickClaim", () => {
     expect(pickClaim({ a: "", b: 3, c: ["Eva"] }, ["a", "b", "c"])).toBeUndefined();
   });
 });
+
+import { loaRank, normalizeLoa } from "../src/identity/loa";
+
+describe("assurance level", () => {
+  it("normalises eIDAS URIs", () => {
+    expect(normalizeLoa("http://eidas.europa.eu/LoA/high")).toBe("high");
+    expect(normalizeLoa("http://eidas.europa.eu/LoA/substantial")).toBe("substantial");
+    expect(normalizeLoa("LOW")).toBe("low");
+    expect(normalizeLoa(undefined)).toBe("unknown");
+  });
+  it("ranks levels and never lets an unknown one pass", () => {
+    expect(loaRank("high")).toBeGreaterThan(loaRank("substantial"));
+    expect(loaRank("substantial")).toBeGreaterThan(loaRank("low"));
+    expect(loaRank("unknown")).toBe(0);
+    expect(loaRank("urn:something:else")).toBeLessThan(loaRank("substantial"));
+  });
+});

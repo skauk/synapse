@@ -1,4 +1,5 @@
 import { createRemoteJWKSet, jwtVerify } from "jose";
+import { normalizeLoa } from "./loa";
 import type { AuthContext, IdentityProvider, VerifiedIdentity } from "./types";
 
 export interface OidcConfig {
@@ -22,13 +23,17 @@ interface Discovery {
   jwks_uri: string;
 }
 
-/** First of the candidate claim names that holds a non-empty string. */
-export function pickClaim(payload: Record<string, unknown>, names: string[]): string | undefined {
+/** First of the candidate claim names that holds a non-empty string, with the name that matched. */
+export function findClaim(payload: Record<string, unknown>, names: string[]): { name: string; value: string } | undefined {
   for (const name of names) {
     const v = payload[name];
-    if (typeof v === "string" && v) return v;
+    if (typeof v === "string" && v) return { name, value: v };
   }
   return undefined;
+}
+
+export function pickClaim(payload: Record<string, unknown>, names: string[]): string | undefined {
+  return findClaim(payload, names)?.value;
 }
 
 async function s256(verifier: string): Promise<string> {
@@ -96,18 +101,21 @@ export class OidcProvider implements IdentityProvider {
     });
     if (payload.nonce !== ctx.nonce) throw new Error("nonce mismatch");
 
-    const givenName = pickClaim(payload, this.cfg.claims.givenName);
-    const familyName = pickClaim(payload, this.cfg.claims.familyName);
-    if (!givenName || !familyName) {
+    const given = findClaim(payload, this.cfg.claims.givenName);
+    const family = findClaim(payload, this.cfg.claims.familyName);
+    if (!given || !family) {
       // Names of the claims only, never their values: enough to fix the claim mapping.
       throw new Error(`name claims missing from id_token; it contains: ${Object.keys(payload).join(", ")}`);
     }
+    const bpk = findClaim(payload, this.cfg.claims.bpk);
+    const loa = findClaim(payload, this.cfg.claims.loa);
     return {
-      givenName,
-      familyName,
-      bpk: pickClaim(payload, this.cfg.claims.bpk),
-      loa: pickClaim(payload, this.cfg.claims.loa) ?? "unknown",
+      givenName: given.value,
+      familyName: family.value,
+      bpk: bpk?.value,
+      loa: normalizeLoa(loa?.value),
       method: this.cfg.method,
+      claimsUsed: { givenName: given.name, familyName: family.name, ...(bpk ? { bpk: bpk.name } : {}), ...(loa ? { loa: loa.name } : {}) },
     };
   }
 }

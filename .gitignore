@@ -1,9 +1,10 @@
 .DS_Store
-__pycache__/
-node_modules/
-.wrangler/
+.cache/
 .dev.vars
 .env
-.cache/
-matrix/synapse/
+.idea
+.wrangler/
+__pycache__/
 matrix/room.txt
+matrix/synapse/
+node_modules/

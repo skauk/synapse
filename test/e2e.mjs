@@ -4,9 +4,8 @@ import { readFileSync } from "node:fs";
 import { Buffer } from "node:buffer";
 
 const BASE = process.env.BASE_URL ?? "http://localhost:8787";
-const TOKEN =
-  process.env.BOT_API_TOKEN ??
-  readFileSync(new URL("../.dev.vars", import.meta.url), "utf8").match(/^BOT_API_TOKEN=(.+)$/m)?.[1];
+// The token of the Docker demo stack (docker-compose.yml). Override with BOT_API_TOKEN for another deployment.
+const TOKEN = process.env.BOT_API_TOKEN ?? "demo-bot-token";
 
 const body = (docType, recipient) => ({
   requester: "@lena.hofer:klinikum.example",
@@ -108,6 +107,14 @@ const m1audit = await auditOf(m1.id);
 const m1check = m1audit.find((e) => e.event === "identity_checked");
 check("M1: the failed identity check is in the audit log", m1check?.detail.outcome === "fail" && m1check.detail.reason === "name_mismatch" && m1check.actor.includes("Fremd"));
 check("M1: rejection reveals nothing", stranger.callbackBody.length > 0 && !LEAK.test(stranger.callbackBody) && !/Brandl/.test(stranger.callbackBody));
+
+// Right person, eID below the required level
+const lowLevel = await createRequest(body("lab-result", brandl));
+const low = await answerAs(lowLevel.link, "brandllow");
+check("a low-assurance eID is refused even for the right person", low.callbackStatus === 403 && !low.cookie);
+const lowAudit = await auditOf(lowLevel.id);
+check("the refusal is audited with the levels", lowAudit.some((e) => e.event === "identity_checked" && e.detail.reason === "assurance_too_low" && e.detail.loa === "low"));
+check("a high-assurance eID passes the same check", ok.callbackStatus === 303);
 
 // M2: forwarded to a colleague
 const m2 = await createRequest(body("lab-result", brandl));

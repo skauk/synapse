@@ -4,10 +4,12 @@ export interface VerifiedIdentity {
   familyName: string;
   /** Persistent sector-specific identifier (ID Austria bPK). */
   bpk?: string;
-  /** Assurance level as reported by the provider (eIDAS: low, substantial, high). */
+  /** Assurance level, normalised to eIDAS low, substantial or high ("unknown" if the provider sent none). */
   loa: string;
   /** Provider label for the audit trail and FHIR Provenance, e.g. "id-austria". */
   method: string;
+  /** Which claim name supplied each field (names, never values), for the audit trail. */
+  claimsUsed?: Record<string, string>;
 }
 
 export interface AuthContext {

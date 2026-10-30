@@ -10,6 +10,7 @@ import { matchesName, sameName } from "./names";
 import { notifyRequester } from "./notify";
 import { ParseError, parseAnswer, type ParsedDoc } from "./parse";
 import { esc, page } from "./html";
+import { loaRank } from "./identity/loa";
 import { MOCK_PEOPLE, MockProvider } from "./identity/mock";
 import { OidcProvider } from "./identity/oidc";
 import type { IdentityProvider } from "./identity/types";
@@ -70,6 +71,8 @@ function parseNewRequest(raw: unknown): Omit<NewRequest, "id" | "tokenHash" | "e
   };
 }
 
+app.get("/healthz", (c) => c.text("ok"));
+
 // ---- Matrix bot -> service -------------------------------------------------
 
 async function botAuthorized(c: Context<{ Bindings: Env }>): Promise<boolean> {
@@ -91,8 +94,8 @@ app.post("/api/requests", async (c) => {
   const input = parseNewRequest(await c.req.json().catch(() => null));
   if (!input) return c.json({ error: "invalid request" }, 400);
 
-  const { id, link } = await createRequest(c.env, input);
-  return c.json({ id, link }, 201);
+  const { id, link, delivery } = await createRequest(c.env, input);
+  return c.json({ id, link, delivery }, 201);
 });
 
 // ---- Outside person --------------------------------------------------------
@@ -150,6 +153,17 @@ app.get("/auth/callback", async (c) => {
     return page("Identification failed", "<h1>Identification failed.</h1><p>Please try again from the link.</p>", 401);
   }
 
+  // The eID must reach the required eIDAS level. An unknown level never passes.
+  if (loaRank(identity.loa) < loaRank(c.env.MIN_LOA)) {
+    await audit(c.env.DB, {
+      requestId: rid,
+      event: "identity_checked",
+      actor: `${identity.givenName} ${identity.familyName}`,
+      detail: { outcome: "fail", reason: "assurance_too_low", loa: identity.loa, required: c.env.MIN_LOA, method: identity.method },
+    });
+    return page("Security level too low", "<h1>Your electronic ID does not reach the required security level.</h1><p>Nothing has been shared with you.</p>", 403);
+  }
+
   const result = await stub.finishAuth(identity);
   const who = `${identity.givenName} ${identity.familyName}`;
   const bpkHash = identity.bpk ? (await sha256Hex(identity.bpk)).slice(0, 16) : undefined;
@@ -163,6 +177,7 @@ app.get("/auth/callback", async (c) => {
       method: identity.method,
       loa: identity.loa,
       bpkHash,
+      ...(identity.claimsUsed ? { claimsUsed: identity.claimsUsed } : {}),
     },
   });
 
@@ -346,7 +361,7 @@ app.get("/mock-idp/login", (c) => {
   const state = c.req.query("state") ?? "";
   const buttons = Object.entries(MOCK_PEOPLE)
     .map(([key, p]) => `<form method="post"><input type="hidden" name="state" value="${esc(state)}">
-<button name="who" value="${esc(key)}">Log in as ${esc(p.givenName)} ${esc(p.familyName)}</button></form>`)
+<button name="who" value="${esc(key)}">Log in as ${esc(p.givenName)} ${esc(p.familyName)}${p.loa === "high" ? "" : ` (${esc(p.loa)} assurance)`}</button></form>`)
     .join("");
   return page("Mock ID Austria", `<h1>Mock ID Austria</h1><p>Simulated eID. Pick who is logging in.</p>${buttons}`);
 });
@@ -360,10 +375,10 @@ app.post("/mock-idp/login", async (c) => {
 
 app.get("/outbox", async (c) => {
   const { results } = await c.env.DB.prepare(
-    "SELECT ts, channel, to_addr, subject, body FROM outbox ORDER BY id DESC LIMIT 50",
-  ).all<{ ts: string; channel: string; to_addr: string; subject: string; body: string }>();
+    "SELECT ts, channel, to_addr, subject, body, delivery FROM outbox ORDER BY id DESC LIMIT 50",
+  ).all<{ ts: string; channel: string; to_addr: string; subject: string; body: string; delivery: string }>();
   const rows = results
-    .map((m) => `<tr><td>${esc(m.ts)}</td><td>${esc(m.channel)}</td><td>${esc(m.to_addr)}</td><td>${esc(m.subject)}</td><td><pre>${esc(m.body)}</pre></td></tr>`)
+    .map((m) => `<tr><td>${esc(m.ts)}</td><td>${esc(m.channel)}</td><td>${esc(m.to_addr)}</td><td>${esc(m.subject)}</td><td><pre>${esc(m.body)}</pre></td><td>${esc(m.delivery)}</td></tr>`)
     .join("");
   const notes = (
     await c.env.DB.prepare("SELECT ts, recipient, text FROM notifications ORDER BY id DESC LIMIT 50").all<{ ts: string; recipient: string; text: string }>()
@@ -372,7 +387,7 @@ app.get("/outbox", async (c) => {
     .join("");
   return page(
     "Outbox",
-    `<h1>Simulated mail and SMS</h1><table><tr><th>Time</th><th>Channel</th><th>To</th><th>Subject</th><th>Message</th></tr>${rows}</table>
+    `<h1>Simulated mail and SMS</h1><table><tr><th>Time</th><th>Channel</th><th>To</th><th>Subject</th><th>Message</th><th>Delivery</th></tr>${rows}</table>
 <h1>Simulated Matrix messages</h1><table><tr><th>Time</th><th>To</th><th>Message</th></tr>${notes}</table>`,
   );
 });

@@ -4,6 +4,9 @@
   "main": "src/index.ts",
   "compatibility_date": "2026-10-29",
   "compatibility_flags": ["nodejs_compat"],
+  // Only the production URL; preview URLs would expose the Worker under other hostnames.
+  "workers_dev": true,
+  "preview_urls": false,
   "observability": { "enabled": true, "head_sampling_rate": 1 },
 
   // This file is the deployed configuration. Local runs override it with .dev.vars
@@ -17,11 +20,28 @@
     "SENDER_ORG": "Klinikum Beispielstadt",
     // FHIR R4 base URL. Deployed: the public HAPI test server. Locally: the container from docker-compose.yml.
     "FHIR_BASE_URL": "https://hapi.fhir.org/baseR4",
-    // Matrix: the homeserver the Worker calls, the bot account of the application service, and the
-    // directory of members who may send requests (comma separated). Secrets AS_TOKEN and HS_TOKEN: see scripts/matrix-setup.sh.
-    "MATRIX_HOMESERVER_URL": "http://localhost:8008",
+    // Matrix. The homeserver is the public demo server (tunnelled from the home server). The bot is an
+    // application service; secrets AS_TOKEN and HS_TOKEN must match its registration file.
+    "MATRIX_HOMESERVER_URL": "https://matrix.dingsbums.click",
     "MATRIX_BOT_USER": "@pgkbot:klinikum.example",
-    "MATRIX_MEMBERS": "@lena.hofer:klinikum.example",
+    // Accounts that may invite the bot into a room (and, unless MATRIX_OPEN, send requests). Comma separated.
+    "MATRIX_MEMBERS": "@host:klinikum.example",
+    // "true": anyone in a room with the bot may send commands. Limited by the settings below.
+    "MATRIX_OPEN": "true",
+    // Commands per Matrix user and day (0 = unlimited) and the only date (Europe/Vienna, YYYY-MM-DD) the bot answers ("" = any).
+    "BOT_MAX_MESSAGES": "10",
+    "BOT_ACTIVE_DATE": "2026-10-30",
+    // Patient ids that may be requested ("" = any). The public FHIR server holds other people's test data.
+    "ALLOWED_PATIENTS": "aimh-skauk-maria-beispiel",
+
+    // "cloudflare" sends the request email for real, "mailpit" hands it to a local mail catcher, "outbox" only records it. Addresses on reserved domains
+    // (.example, .test, ...) are never sent to. MAIL_REDIRECT_TO sends every request email to one test mailbox instead.
+    "MAIL_MODE": "cloudflare",
+    "MAIL_FROM": "requests@dingsbums.click",
+    "MAIL_FROM_NAME": "Klinikum Beispielstadt (demo)",
+    "MAIL_REDIRECT_TO": "",
+    // Only for MAIL_MODE=mailpit (the local Docker stack): base URL of the Mailpit container.
+    "MAILPIT_URL": "",
 
     // ID Austria reference environment (OIDC). Its discovery document lists only the scopes openid and
     // profile, client_secret_post and claims_parameter_supported: attributes must be requested with the
@@ -39,8 +59,13 @@
     "OIDC_CLAIM_GIVEN_NAME": "urn:pvpgvat:oidc.given_name,given_name",
     "OIDC_CLAIM_FAMILY_NAME": "urn:pvpgvat:oidc.family_name,family_name",
     "OIDC_CLAIM_BPK": "urn:pvpgvat:oidc.bpk,bpk",
-    "OIDC_CLAIM_LOA": "acr"
+    "OIDC_CLAIM_LOA": "acr",
+    // Minimum eIDAS level the eID must reach: low, substantial or high. The reference IdP reports high in `acr`.
+    "MIN_LOA": "substantial"
   },
+
+  // Cloudflare Email Service. The sending domain (MAIL_FROM) must be onboarded: `wrangler email sending enable <domain>`.
+  "send_email": [{ "name": "EMAIL" }],
 
   "d1_databases": [
     { "binding": "DB", "database_name": "aimh-gateway", "migrations_dir": "migrations" }

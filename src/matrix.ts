@@ -49,6 +49,29 @@ export type Command =
   | { kind: "help" }
   | { kind: "request"; docType: DocType; recipientName: string; channel: "email" | "sms"; address: string; patient: string };
 
+/** Today's date in Vienna, "YYYY-MM-DD". */
+function viennaDate(): string {
+  return new Intl.DateTimeFormat("sv-SE", { timeZone: "Europe/Vienna" }).format(new Date());
+}
+
+type Quota = "ok" | "closed" | "notice" | "silent";
+
+/**
+ * Count one command for this user. "closed": outside the active date. "notice": first command over the limit
+ * (tell the user once), "silent": further ones are ignored so the bot cannot be made to spam the room.
+ */
+async function checkQuota(env: Env, user: string): Promise<Quota> {
+  const day = viennaDate();
+  if (env.BOT_ACTIVE_DATE && env.BOT_ACTIVE_DATE !== day) return "closed";
+  const max = Number(env.BOT_MAX_MESSAGES);
+  if (!max) return "ok";
+  const row = await env.DB.prepare("INSERT INTO bot_usage (user, day, count) VALUES (?, ?, 1) ON CONFLICT(user, day) DO UPDATE SET count = count + 1 RETURNING count")
+    .bind(user, day)
+    .first<{ count: number }>();
+  const n = row?.count ?? 1;
+  return n <= max ? "ok" : n === max + 1 ? "notice" : "silent";
+}
+
 export const HELP = [
   "I request documents from people outside the network.",
   '!request lab "Dr. Eva Brandl" eva.brandl@labor-kanal.example maria-beispiel',
@@ -75,18 +98,25 @@ export function parseCommand(body: string): Command | { error: string } {
 async function handleMessage(env: Env, ev: MatrixEvent): Promise<void> {
   const reply = (text: string) => sendMessage(env, ev.room_id, text);
   const members = env.MATRIX_MEMBERS.split(",").map((m) => m.trim());
-  if (!members.includes(ev.sender)) {
+  if (env.MATRIX_OPEN !== "true" && !members.includes(ev.sender)) {
     await reply("Only members of the network can send requests.");
     return;
   }
+  const quota = await checkQuota(env, ev.sender);
+  if (quota === "silent") return;
+  if (quota === "closed") return reply(`This demo is only open on ${env.BOT_ACTIVE_DATE}.`);
+  if (quota === "notice") return reply(`${ev.sender}: you have used your ${env.BOT_MAX_MESSAGES} messages for today. I will not answer more.`);
   const cmd = parseCommand(ev.content.body ?? "");
   if ("error" in cmd) return reply(cmd.error);
   if (cmd.kind === "help") return reply(HELP);
 
+  const allowed = env.ALLOWED_PATIENTS.split(",").map((p) => p.trim()).filter(Boolean);
   const patient = await findPatient(env, cmd.patient);
   if (!patient) return reply(`I found no patient “${cmd.patient}”.`);
+  // On a shared FHIR server only the configured demo patients may be requested.
+  if (allowed.length && !allowed.includes(patient.id)) return reply(`Only these demo patients can be requested: ${allowed.join(", ")}.`);
   const requesterName = await displayName(env, ev.sender);
-  const { link } = await createRequest(env, {
+  const { link, delivery } = await createRequest(env, {
     requester: ev.sender,
     ...(requesterName ? { requesterName } : {}),
     roomId: ev.room_id,
@@ -95,9 +125,15 @@ async function handleMessage(env: Env, ev: MatrixEvent): Promise<void> {
     recipient: { name: cmd.recipientName, channel: cmd.channel, address: cmd.address },
   });
   const via = cmd.channel === "email" ? `email to ${cmd.address}` : `SMS to ${cmd.address}`;
+  const problem = delivery.startsWith("not sent") || delivery.startsWith("failed");
+  const note = problem
+    ? `\n⚠️ The ${cmd.channel === "email" ? "email" : "message"} was ${delivery}.`
+    : delivery.startsWith("redirected")
+      ? "\n(demo: the email was redirected to the test mailbox)"
+      : "";
   await reply(
-    `Request sent to ${cmd.recipientName} by ${via}. I will tell you here when they answer.` +
-      (env.IDP === "mock" && env.BASE_URL.startsWith("http://localhost") ? `\n(demo link: ${link})` : ""),
+    `${problem ? "Request created, but not delivered" : `Request sent to ${cmd.recipientName} by ${via}`}${problem ? ` to ${cmd.recipientName}` : ""}. I will tell you here when they answer.${note}` +
+      (env.IDP === "mock" && env.MAIL_MODE === "outbox" && env.BASE_URL.startsWith("http://localhost") ? `\n(demo link: ${link})` : ""),
   );
 }
 

@@ -1,0 +1,12 @@
+.git
+.cache
+.claude
+.wrangler
+.dev.vars
+.env
+node_modules
+matrix/synapse
+matrix/room.txt
+ONBOARDING.md
+docs
+deploy
