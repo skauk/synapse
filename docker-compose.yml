@@ -49,6 +49,7 @@ services:
 
   worker:
     build: .
+    image: aimh-worker:local
     # Starts after the seed has finished, so `docker compose up --wait` returns only when the room exists.
     # The bot joins the room when this service starts and Synapse delivers the invitation.
     depends_on:
@@ -75,6 +76,26 @@ services:
     depends_on: [hapi, synapse]
     restart: "no"
     volumes: ["synapse-data:/synapse-data:ro"]
+
+  # Temporary containers: `docker compose run --rm tests` and `docker compose run --rm validate`.
+  # They join this network, so the tests need no Node installation on the host.
+  tests:
+    image: aimh-worker:local   # the image `docker compose up --build` has just built, so the tests are never stale
+    profiles: ["tests"]
+    entrypoint: ["sh", "docker/run-tests.sh"]
+    depends_on:
+      worker: { condition: service_healthy }
+    environment:
+      <<: *demo
+      BASE_URL: http://worker:8787
+      FHIR_BASE_URL: http://hapi:8080/fhir
+      MATRIX_URL: http://synapse:8008
+      MAILPIT_URL: http://mailpit:8025
+
+  validate:
+    image: aimh-worker:local
+    profiles: ["tests"]
+    entrypoint: ["sh", "docker/validate.sh"]
 
 volumes:
   synapse-data:

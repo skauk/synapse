@@ -4,7 +4,9 @@
   "main": "src/index.ts",
   "compatibility_date": "2026-10-29",
   "compatibility_flags": ["nodejs_compat"],
-  // Only the production URL; preview URLs would expose the Worker under other hostnames.
+  // The Worker is served on its own domain; the zone must be in the same Cloudflare account. The ID Austria service
+  // provider must have BASE_URL + /auth/callback registered as a redirect URI. workers.dev stays on during the move.
+  "routes": [{ "pattern": "synapse.dingsbums.click", "custom_domain": true }],
   "workers_dev": true,
   "preview_urls": false,
   "observability": { "enabled": true, "head_sampling_rate": 1 },
@@ -16,7 +18,7 @@
     // "oidc" or "mock". The mock IdP and the /outbox mail catcher only run when BASE_URL is localhost.
     "IDP": "oidc",
     // The redirect URI registered with ID Austria is BASE_URL + /auth/callback.
-    "BASE_URL": "https://synapse.skauk.workers.dev",
+    "BASE_URL": "https://synapse.dingsbums.click",
     "SENDER_ORG": "Klinikum Beispielstadt",
     // FHIR R4 base URL. Deployed: the public HAPI test server. Locally: the container from docker-compose.yml.
     "FHIR_BASE_URL": "https://hapi.fhir.org/baseR4",

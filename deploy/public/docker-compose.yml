@@ -15,7 +15,7 @@ services:
       HS_TOKEN: ${HS_TOKEN:?HS_TOKEN must match the Worker secret}
       SYNAPSE_SERVER_NAME: klinikum.example
       SYNAPSE_REPORT_STATS: "no"
-      WORKER_URL: https://synapse.skauk.workers.dev
+      WORKER_URL: https://synapse.dingsbums.click
       PUBLIC_BASEURL: https://matrix.dingsbums.click
     volumes: ["synapse-data:/data"]
     configs:

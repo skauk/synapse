@@ -4,6 +4,7 @@
 import { readFileSync } from "node:fs";
 
 const BASE = process.env.BASE_URL ?? "http://localhost:8787";
+const local = (u) => u.replace(/^http:\/\/localhost:8787/, BASE); // links the Worker prints point at localhost; inside the test container use BASE
 const HS = process.env.MATRIX_URL ?? "http://localhost:8008";
 let ROOM; // found by name below
 const MAILPIT = process.env.MAILPIT_URL ?? `http://localhost:${process.env.MAILPIT_PORT ?? 8025}`;
@@ -104,12 +105,12 @@ async function waitForBot(pattern, seconds = 20) {
 /** Open the demo link, identify as `who` with the mock IdP, return the session cookie. */
 async function identifyAs(link, who) {
   const [, , rid, token] = new URL(link).pathname.split("/");
-  await fetch(link);
+  await fetch(local(link));
   const start = await fetch(`${BASE}/auth/start`, { method: "POST", redirect: "manual", body: new URLSearchParams({ rid, token }) });
   const loginUrl = start.headers.get("location");
   const state = new URL(loginUrl).searchParams.get("state");
-  const idp = await fetch(loginUrl.replace(/\?.*/, ""), { method: "POST", redirect: "manual", body: new URLSearchParams({ state, who }) });
-  const cb = await fetch(idp.headers.get("location"), { redirect: "manual" });
+  const idp = await fetch(local(loginUrl.replace(/\?.*/, "")), { method: "POST", redirect: "manual", body: new URLSearchParams({ state, who }) });
+  const cb = await fetch(local(idp.headers.get("location")), { redirect: "manual" });
   return cb.headers.get("set-cookie")?.split(";")[0];
 }
 

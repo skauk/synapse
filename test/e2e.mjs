@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 import { Buffer } from "node:buffer";
 
 const BASE = process.env.BASE_URL ?? "http://localhost:8787";
+const local = (u) => u.replace(/^http:\/\/localhost:8787/, BASE); // links the Worker prints point at localhost; inside the test container use BASE
 // The token of the Docker demo stack (docker-compose.yml). Override with BOT_API_TOKEN for another deployment.
 const TOKEN = process.env.BOT_API_TOKEN ?? "demo-bot-token";
 
@@ -28,7 +29,7 @@ async function createRequest(payload) {
 async function answerAs(link, who) {
   const url = new URL(link);
   const [, , rid, token] = url.pathname.split("/");
-  const opened = await fetch(link);
+  const opened = await fetch(local(link));
   const start = await fetch(`${BASE}/auth/start`, {
     method: "POST",
     redirect: "manual",
@@ -36,12 +37,12 @@ async function answerAs(link, who) {
   });
   const loginUrl = start.headers.get("location");
   const state = new URL(loginUrl).searchParams.get("state");
-  const login = await fetch(loginUrl.replace(/\?.*/, ""), {
+  const login = await fetch(local(loginUrl.replace(/\?.*/, "")), {
     method: "POST",
     redirect: "manual",
     body: new URLSearchParams({ state, who }),
   });
-  const cb = await fetch(login.headers.get("location"), { redirect: "manual" });
+  const cb = await fetch(local(login.headers.get("location")), { redirect: "manual" });
   const cookie = cb.headers.get("set-cookie")?.split(";")[0];
   const answer = cookie ? await fetch(`${BASE}/answer`, { headers: { cookie } }) : null;
   return { opened: await opened.text(), callbackStatus: cb.status, callbackBody: await cb.text(), cookie, answer: answer ? await answer.text() : "" };
